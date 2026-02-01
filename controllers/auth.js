@@ -174,7 +174,7 @@ const userSignUp = asyncHandler(async (req, res) => {
       const token = jwt.sign({ _id: findUser._id }, JWT_SECRET);
       print("User logged in successfully:", findUser.firstName);
       return successHandler(req, res, {
-        message: "Login Successful2",
+        message: "Login Successful3",
         ResponseStatus: 2,
         AccessToken: token,
       });
