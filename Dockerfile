@@ -4,7 +4,7 @@ COPY package*.json ./
 RUN npm install
 
 COPY . .
-EXPOSE 3000
-# CMD ["npm", "start"]
+EXPOSE 2929
+CMD ["node", "server"]
 # CMD ["node","index"]
-CMD ["node", "index"]
+# CMD ["node", "index"]

@@ -4,9 +4,9 @@
  * @returns {string} normalized 10-digit mobile number
  * @throws {Error} if mobile format is invalid
  */
-function normalizeMobileNumber(mobile) {
-  if (!mobile) {
-    res.status(400);
+function normalizeMobileNumber(mobile, res) {
+  if (!mobile) {s
+    res.status(400);s
     throw new Error("Mobile number is required");
   }
 

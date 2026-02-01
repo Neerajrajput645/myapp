@@ -89,110 +89,90 @@ const operatorCircleByPhone = asyncHandler(async (req, res) => {
 
 // ============================== Mobile Recharge ================================
 const planFetch = asyncHandler(async (req, res) => {
-    try {
-        print("------------------- Mobile Plans Fetch start -------------------");
-        const MobileNumber = normalizedMobileNumber(req.query?.MobileNumber);
-        const { Operator_Code: operatorCode, Circle_Code: circleCode } = req.query;
-        print(`${MobileNumber} - planFetch called with`, { MobileNumber, operatorCode, circleCode });
-        // find operator & circle
-        const [findOp, findCir] = await Promise.all([
-            OperatorData.findOne({ PlanApi_Operator_code: operatorCode }),
-            CircleList.findOne({ planapi_circlecode: circleCode })
-        ]);
-        if (!findCir || !findOp) {
-            print(`${MobileNumber} - Invalid Operator or Circle`, { operatorCode, circleCode });
-            res.status(400);
-            throw new Error("Invalid Operator or Circle");
+    print("------------------- Mobile Plans Fetch start -------------------");
+
+    const MobileNumber = normalizedMobileNumber(req.query?.MobileNumber, res);
+    const { Operator_Code: operatorCode, Circle_Code: circleCode } = req.query;
+
+    if (!MobileNumber || !operatorCode || !circleCode) {
+        res.status(400);
+        throw new Error("MobileNumber, Operator_Code, and Circle_Code are required");
+    }
+
+    print(`${MobileNumber} - planFetch called with`, { MobileNumber, operatorCode, circleCode });
+
+    const [findOp, findCir] = await Promise.all([
+        OperatorData.findOne({ PlanApi_Operator_code: operatorCode }),
+        CircleList.findOne({ planapi_circlecode: circleCode })
+    ]);
+    
+    if (!findCir || !findOp) {
+        res.status(400);
+        throw new Error("Invalid Operator or Circle");
+    }
+    print(`${MobileNumber} - Found Operator and Circle`, { findOp: findOp.Operator_name, findCir: findCir.circlename });
+    const plans = await axios.get(
+        `http://planapi.in/api/Mobile/Operatorplan?apimember_id=${process.env.PLAN_API_USER_ID}&api_password=${process.env.PLAN_API_PASSWORD}&cricle=${findCir.planapi_circlecode}&operatorcode=${findOp.PlanApi_Operator_code}`
+    );
+
+    if (plans.data.STATUS != 0) {
+        logger.error(`${MobileNumber} - Plan API Error`, { response: plans.data });
+        res.status(400);
+        throw new Error(plans.data?.MESSAGE || "Errors in Plan Fetching");
+    }
+
+    const flattenRDATA = (data) => {
+        let result = [];
+        for (let key in data) {
+            if (Array.isArray(data[key])) result = result.concat(data[key]);
         }
-        const plans = await axios.get(
-            `http://planapi.in/api/Mobile/Operatorplan?
-      apimember_id=${process.env.PLAN_API_USER_ID}&
-      api_password=${process.env.PLAN_API_PASSWORD}&
-      cricle=${findCir.planapi_circlecode}&
-      operatorcode=${findOp.PlanApi_Operator_code}`
+        return result;
+    };
+
+    const flattenedArray = flattenRDATA(plans?.data.RDATA);
+
+    // 👉 ROFFER Logic
+    if (["Airtel", "VI"].includes(findOp.Operator_name)) {
+
+        const rofferResponse = await axios.get(
+            `http://planapi.in/api/Mobile/RofferCheck?apimember_id=${process.env.PLAN_API_USER_ID}&api_password=${process.env.PLAN_API_PASSWORD}&operator_code=${findOp.PlanApi_Operator_code}&mobile_no=${MobileNumber}`
         );
 
-        // if error
-        if (plans.data.STATUS != 0) {
-            print(MobileNumber + " - Error fetching plans", { response: plans.data });
-            logger.error(MobileNumber + " - Error fetching plans: " + (plans.data?.MESSAGE || "Errors in Plan Fetching"), { response: plans.data });
-            res.status(400);
-            throw new Error(plans.data?.MESSAGE || "Errors in Plan Fetching");
-        }
+        const rofferData = (rofferResponse.data.RDATA || []).map(roffer => ({
+            Type: "roffer",
+            rs: parseInt(roffer.price, 10),
+            validity: "N/A",
+            desc: `${roffer.logdesc} | ${roffer.ofrtext}`,
+        }));
 
-        const flattenRDATA = (data) => {
-            let result = [];
-            for (let key in data) {
-                if (Array.isArray(data[key])) {
-                    result = result.concat(data[key]);
-                }
-            }
-            return result;
-        };
+        const rofferMap = new Map(rofferData.map(r => [r.rs, r]));
 
-        const flattenedArray = flattenRDATA(plans?.data.RDATA);
+        const mergedPlans = flattenedArray.map(plan =>
+            rofferMap.has(plan.rs) ? rofferMap.get(plan.rs) : plan
+        );
 
-        if (["Airtel", "VI"].includes(findOp.Operator_name)) {
-            // Fetch ROFFER data
-            const rofferResponse = await axios.get(
-                `http://planapi.in/api/Mobile/RofferCheck?
-        apimember_id=${process.env.PLAN_API_USER_ID}&
-        api_password=${process.env.PLAN_API_PASSWORD}&
-        operator_code=${findOp.PlanApi_Operator_code}&
-        mobile_no=${MobileNumber}`
-            );
+        rofferData.forEach(r => {
+            if (!mergedPlans.some(p => p.rs === r.rs)) mergedPlans.push(r);
+        });
 
-            const rofferData = rofferResponse.data.RDATA.map((roffer) => ({
-                Type: "roffer",
-                rs: parseInt(roffer.price, 10),
-                validity: "N/A",
-                desc: `${roffer.logdesc} | ${roffer.ofrtext}`,
-            }));
+        successHandler(req, res, {
+            Remarks: "All plans",
+            image: findOp.img,
+            Data: mergedPlans,
+        });
 
-            // Create a map for ROFFER data based on 'rs' (price)
-            const rofferMap = new Map(
-                rofferData.map((roffer) => [roffer.rs, roffer])
-            );
+    } else {
 
-            // Replace overlapping plans and combine unique ROFFER plans
-            const mergedPlans = flattenedArray.map((plan) =>
-                rofferMap.has(plan.rs) ? rofferMap.get(plan.rs) : plan
-            );
-
-            rofferData.forEach((roffer) => {
-                if (!mergedPlans.some((plan) => plan.rs === roffer.rs)) {
-                    mergedPlans.push(roffer); // Add unique ROFFER plans
-                }
-            });
-
-            print(MobileNumber + " - Plans fetched and merged successfully", { totalPlans: mergedPlans.length });
-            // success respond
-            print("------------------- Mobile Plans Fetch end -------------------");
-            successHandler(req, res, {
-                Remarks: "All plans",
-                image: findOp.img,
-                Data: mergedPlans,
-            });
-        } else {
-            print(MobileNumber + " - Plans fetched successfully", { totalPlans: flattenedArray.length });
-
-            print("------------------- Mobile Plans Fetch end -------------------");
-            successHandler(req, res, {
-                Remarks: "All plans",
-                image: findOp.img,
-                Data: flattenedArray,
-
-            });
-        }
-
+        successHandler(req, res, {
+            Remarks: "All plans",
+            image: findOp.img,
+            Data: flattenedArray,
+        });
     }
-    catch (error) {
-        print("Error in planFetch:", error.message);
-        logger.error("Error in planFetch: " + (error.message || JSON.stringify(error)));
-        res.status(500);
-        throw new Error(error.message || "Unable to fetch mobile plans");
-    }
+
+    print("------------------- Mobile Plans Fetch end -------------------");
 });
+
 
 // ----------------------- Recharge API Call ----------------------
 async function callRechargeAPI(findOp, findCir, number, amount, txnId, isPrepaid) {

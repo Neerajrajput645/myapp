@@ -1,0 +1,10 @@
+services:
+  myapp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "2929:2929"
+    env_file:
+      - .env
