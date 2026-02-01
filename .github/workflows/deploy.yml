@@ -20,6 +20,6 @@ jobs:
           username: ${{ secrets.PROD_SERVER_USER }}
           key: ${{ secrets.PROD_SERVER_SSH_KEY }}
           script: |
-            cd /var/www/myapp
+            cd /home/nodeapp/myapp
             git pull
             docker-compose up -d --build
